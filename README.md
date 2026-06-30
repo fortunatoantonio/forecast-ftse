@@ -222,6 +222,130 @@ Shared configuration: `daily_seasonality=False`, `weekly_seasonality=False`, `se
 
 ---
 
+## Results
+
+All models were evaluated on the same setup: **MA5-smoothed series**, **1,262 training observations**, **10 out-of-sample test days** (16–27 September 2024). Metrics are reported on **Train**, **Test**, and **Full** (entire series).
+
+### Best model per approach (test set)
+
+| Rank | Script | Model | Key features | R² Test | MAPE Test | MAE Test | RMSE Test |
+|------|--------|-------|--------------|---------|-----------|----------|-----------|
+| 1 | `mlpr.py` | `dataset_single_low` | `low` + price sequence | **0.8442** | **0.16%** | **54.99** | **66.52** |
+| 2 | `arima.py` | ARIMA([1,3],1,0) + linear drift | Univariate (MA5) | 0.8018 | 0.16% | 55.21 | 75.02 |
+| 3 | `prop.py` | Yearly seasonality + momentum 1,3,5,10 | `seasonality_prior_scale=0.1` | 0.3318 | 0.35% | 118.17 | 137.76 |
+
+**Overall winner:** the MLP with the `low` price as an exogenous feature achieves the highest test R² (0.8442) and the lowest MAE/RMSE. ARIMA Model 1 is a close second with nearly identical MAPE (0.16%) and only slightly higher error. Prophet models underperform on the test set despite strong in-sample fit.
+
+### Cross-approach comparison (best models)
+
+| Metric | ARIMA ([1,3],1,0) | MLP (`dataset_single_low`) | Prophet (Model 1) |
+|--------|-------------------|----------------------------|-------------------|
+| **R² Train** | 0.9801 | 0.9992 | 0.9834 |
+| **R² Test** | 0.8018 | **0.8442** | 0.3318 |
+| **R² Full** | 0.9807 | 0.9992 | 0.9839 |
+| **MAPE Train** | 0.33% | 0.38% | 1.78% |
+| **MAPE Test** | **0.16%** | **0.16%** | 0.35% |
+| **MAPE Full** | 0.33% | 0.38% | 1.77% |
+| **MAE Test** | 55.21 | **54.99** | 118.17 |
+| **RMSE Test** | 75.02 | **66.52** | 137.76 |
+
+> **Interpretation:** All three approaches fit the training data well (R² > 0.98), but generalization on the 10-day test window differs sharply. ARIMA and MLP maintain R² > 0.80 on test data; Prophet drops to R² ≈ 0.33, suggesting overfitting or mismatch between yearly seasonality and the short test horizon.
+
+---
+
+### `arima.py` — detailed results
+
+Both models use linear drift `trend=[0,1,0,0]` on the MA5 series.
+
+| Metric | Model 1: ARIMA([1,3],1,0) | Model 2: ARIMA(0,1,4) |
+|--------|---------------------------|------------------------|
+| R² Train | 0.9801 | 0.9802 |
+| R² Test | **0.8018** | 0.4283 |
+| R² Full | 0.9807 | 0.9808 |
+| MAPE Train | 0.33% | 0.27% |
+| MAPE Test | **0.16%** | 0.31% |
+| MAPE Full | 0.33% | 0.27% |
+| MAE Test | **55.21** | 105.61 |
+| RMSE Test | **75.02** | 127.41 |
+
+**Selected model:** ARIMA([1,3],1,0) with selective AR terms at lags 1 and 3. The MA(4) alternative (Model 2) nearly halves test R², confirming that the AR structure better captures short-term dynamics on this series.
+
+**Sample test forecasts (Model 1):**
+
+| Date | Predicted | Actual | Error |
+|------|-----------|--------|-------|
+| 2024-09-16 | 33,498.21 | 33,425.60 | −72.61 |
+| 2024-09-20 | 33,720.29 | 33,792.00 | +71.71 |
+| 2024-09-27 | 33,855.66 | 34,046.00 | +190.34 |
+
+---
+
+### `prop.py` — detailed results
+
+| Metric | Model 1 (momentum 1,3,5,10; prior 0.1) | Model 2 (momentum 3,10; prior 0.15) |
+|--------|----------------------------------------|--------------------------------------|
+| R² Train | **0.9834** | 0.9824 |
+| R² Test | **0.3318** | 0.2626 |
+| R² Full | **0.9839** | 0.9829 |
+| MAPE Train | **1.78%** | 1.83% |
+| MAPE Test | 0.35% | **0.35%** |
+| MAE Test | 118.17 | **117.91** |
+| RMSE Test | **137.76** | 144.71 |
+
+**Selected model:** Model 1 (yearly seasonality + four momentum regressors). Adding more momentum terms improves test R² marginally over Model 2, but both Prophet specifications lag far behind ARIMA and MLP on out-of-sample R².
+
+**Sample test forecasts (Model 1):**
+
+| Date | Predicted | Actual | Error (%) |
+|------|-----------|--------|-----------|
+| 2024-09-16 | 33,632.38 | 33,425.60 | −0.62% |
+| 2024-09-19 | 33,704.00 | 33,740.40 | +0.11% |
+| 2024-09-27 | 33,958.48 | 34,046.00 | +0.26% |
+
+---
+
+### `mlpr.py` — detailed results
+
+**Feature screening:** 24 combinations tested; **17 valid** (test R² > 0), **7 discarded** (test R² ≤ 0, including `dataset_single_month` with R² = −2.28).
+
+**Top 6 models (full training):**
+
+| Rank | Model | Features | R² Train | R² Test | MAPE Test | MAE Test | N Features |
+|------|-------|----------|----------|---------|-----------|----------|------------|
+| 1 | `dataset_single_low` | `low` | 0.9992 | **0.8442** | **0.16%** | **54.99** | 2 |
+| 2 | `baseline` | price only | 0.9990 | 0.8307 | 0.16% | 55.33 | 1 |
+| 3 | `dataset_single_high` | `high` | 0.9990 | 0.7886 | 0.17% | 57.51 | 2 |
+| 4 | `dataset_2vars_5` | `closed_var`, `low` | 0.9987 | 0.7755 | 0.22% | 72.78 | 3 |
+| 5 | `dataset_single_open` | `open` | 0.9991 | 0.7017 | 0.21% | 69.69 | 2 |
+| 6 | `dataset_single_day_week` | `day_week` | 0.9961 | 0.6417 | 0.24% | 82.02 | 2 |
+
+**Selected model:** `dataset_single_low` — the daily **low** price, combined with a 4-step price sequence (`N_STEPS=4`), yields the best test performance. OHLC-related features (`low`, `high`, `open`) consistently outperform variation-based (`closed_var`) or calendar features alone.
+
+**Discarded combinations (test R² ≤ 0):** `dataset_single_month`, `dataset_2vars_1`, `dataset_2vars_3`, `dataset_2vars_6`, `dataset_3vars_1`, `dataset_3vars_2`, `dataset_3vars_4`.
+
+---
+
+### Summary ranking (test R²)
+
+```
+1. MLP    — dataset_single_low          R² = 0.8442   MAPE = 0.16%
+2. MLP    — baseline (price only)       R² = 0.8307   MAPE = 0.16%
+3. ARIMA  — ARIMA([1,3],1,0)           R² = 0.8018   MAPE = 0.16%
+4. MLP    — dataset_single_high         R² = 0.7886   MAPE = 0.17%
+5. ARIMA  — ARIMA(0,1,4)               R² = 0.4283   MAPE = 0.31%
+6. Prophet — Model 1                    R² = 0.3318   MAPE = 0.35%
+7. Prophet — Model 2                    R² = 0.2626   MAPE = 0.35%
+```
+
+**Key takeaways:**
+
+- **Short-term forecasting (10 business days):** MLP and ARIMA are the strongest; both achieve ~0.16% MAPE on the test set.
+- **Exogenous information helps:** adding `low` to the MLP improves test R² from 0.83 (baseline) to 0.84; Prophet momentum regressors do not provide the same benefit.
+- **Prophet trade-off:** excellent in-sample fit (R² ≈ 0.98) but weaker out-of-sample generalization on this short horizon.
+- **Model complexity:** simpler ARIMA([1,3],1,0) beats the more flexible MA(4) specification; among MLPs, single-feature models often outperform multi-feature combinations.
+
+---
+
 ## Approach comparison
 
 ```mermaid
